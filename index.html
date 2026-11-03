@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <!-- Faunsoft WebKids-Vorlage: keine Fremd-Skripte, keine Schriften oder CDNs von aussen, keine Cookies, kein Tracking.
+       Alles, was diese Seite laedt, liegt im Build-Ordner. Speicher: nur der Spielstand im Browser (IndexedDB). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: data:; img-src 'self' blob: data:; media-src 'self' blob: data:; worker-src 'self' blob:">
+  <title>Sankt Martin</title>
+  <link rel="icon" href="data:,"><!-- R169: kein favicon.ico-Abruf (sonst 404 in der Konsole) -->
+  <style>
+    html, body { margin: 0; height: 100%; background: #1a2145; overflow: hidden; }
+    /* 31 (ENTWURF Vollbild/Responsive): Spielflaeche fuellt Fenster bzw. iframe ohne Balken. Safe Area (Notch, Home-Indikator) als
+       Innenabstand in Ink #1A2145 (RC-Fallback aus ui/LAYOUT-VOLLBILD-RESPONSIVE-2026-10-27.md 2); breiter als 2,4 : 1 -> Ink-Pillarbox. */
+    #buehne { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; box-sizing: border-box; background: #1a2145;
+              padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+    #unity-canvas { width: 100%; height: 100%; display: block; background: #1a2145; outline: none;
+                    max-width: calc((100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * 2.4);
+                    max-width: calc((100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * 2.4); }
+    /* 31: Vollbild-Knopf nur im Hauptmenue (Signal aus MenueV5 ueber SanktMartinDrehen.jslib), nur mit Fullscreen-API, nicht im Vollbild.
+       Vier Eck-Klammern creme #FFF3DC auf ink #141826, keine Bilddatei. Lage/Groesse setzt smVollbildPruefen (links neben dem Zahnrad). */
+    #vollbild { display: none; position: fixed; z-index: 5; margin: 0; padding: 0; border: 0; border-radius: 0; background: #141826;
+                cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    #vollbild svg { display: block; width: 100%; height: 100%; shape-rendering: crispEdges; pointer-events: none; }
+    /* 50d (AAA-05): Tastflaeche 2 px rundum groesser als die sichtbare Flaeche (48 -> 52 CSS-px), unsichtbar, Klick zaehlt fuer den Knopf */
+    #vollbild::before { content: ""; position: absolute; inset: -2px; }
+    #unity-canvas:focus, #unity-canvas:focus-visible { outline: none; } /* 20 (AD-Drift W5): kein Fokusrahmen am Canvas, Tastaturfokus zeigt der Ring */
+    #laden { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; }
+    /* Ladeanzeige: eine Laterne, die sich fuellt - kein leerer Bildschirm, kein Text noetig */
+    #laterne { width: 90px; height: 110px; border-radius: 10px; background: #2b3566; position: relative; overflow: hidden;
+               box-shadow: 0 0 40px rgba(255, 170, 80, 0.25); border: 6px solid #4a3324; }
+    #licht { position: absolute; left: 0; right: 0; bottom: 0; height: 0%; background: linear-gradient(#ffd27a, #ff9a3c); transition: height .2s; }
+    #stab { width: 6px; height: 46px; background: #6b4a30; margin-bottom: -28px; }
+    /* 24 (Drehhinweis vor Unity): hochkant oder schmales Fenster -> derselbe Hinweis wie im Spiel, cream auf ink, kein Rot.
+       Text: web.loader.rotate (pointer: coarse) bzw. web.loader.widen (Maus), siehe loca/DREHHINWEIS-2026-10-26.md */
+    #drehen { display: none; position: fixed; inset: 0; background: #141826; color: #FFF3DC; flex-direction: column; align-items: center;
+              justify-content: center; gap: 16px; font: 22px sans-serif; text-align: center; padding: 0 7%; }
+    #drehen img { width: 96px; height: 96px; image-rendering: pixelated; }
+    @media (min-width: 600px) and (min-height: 600px) { #drehen { font-size: 32px; } #drehen img { width: 144px; height: 144px; } }
+    @media (max-aspect-ratio: 1/1) { #drehen { display: flex; } }
+    /* 37f (UI-Polish P1-10): Fehlerfall mit "Nochmal laden" (web.loader.retry), cream auf braun, Fokusring #FFD27A */
+    #fehler { color: #f3e9d2; font: 20px sans-serif; text-align: center; max-width: 36em; padding: 0 24px; margin: 0; }
+    #nochmal { min-height: 56px; padding: 0 24px; font: 20px sans-serif; color: #FFF7E6; background: #5D441D; border: 0; border-radius: 10px;
+               cursor: pointer; touch-action: manipulation; }
+    #nochmal:focus, #nochmal:focus-visible { outline: 3px solid #FFD27A; outline-offset: 2px; }
+    .sm-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  </style>
+</head>
+<body>
+  <!-- 37d (UI-Polish P0-3): Canvas fuer Hilfstechnik benannt (Loca ui.sr.canvas / ui.sr.canvas.role), per Tab erreichbar, Fokus beim Start -->
+  <div id="buehne"><canvas id="unity-canvas" tabindex="0" role="application" aria-roledescription="Spiel" aria-label="Sankt Martin, ein Laternenspiel aus Stolberg. Tippen zum Spielen. Tastatur: Pfeiltasten, Enter und Esc"></canvas></div>
+  <button id="vollbild" type="button" tabindex="-1" aria-label="Vollbild"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="#FFF3DC">
+    <rect x="2" y="2" width="5" height="2"/><rect x="2" y="2" width="2" height="5"/><rect x="9" y="2" width="5" height="2"/><rect x="12" y="2" width="2" height="5"/>
+    <rect x="2" y="12" width="5" height="2"/><rect x="2" y="9" width="2" height="5"/><rect x="9" y="12" width="5" height="2"/><rect x="12" y="9" width="2" height="5"/></g></svg></button>
+  <!-- 37f: Fortschritt fuer Hilfstechnik an der Laterne (web.loader.loading). Nicht an #laden selbst: progressbar-Kinder gelten als
+       praesentational, der Drehhinweis-Text (#drehen-text, aria-live) darin wuerde sonst verschluckt. -->
+  <div id="laden"><div id="stab"></div><div id="laterne" role="progressbar" aria-label="Spiel lädt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="licht"></div></div>
+    <div id="drehen"><img id="drehen-bild" alt="" data-breit="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABK0lEQVR4nO2YMQ6DIBSGn8QjYOJsIidxcuaYzp08iU2cTeod6NBgLQIRUMH0fZsJyvf7nkAEQBAEQRAE8SZzvYGWTJwhIpmnwcnJaTAtmXg9H25GjhR16xSCnClzBVEDFHULRd0GPeP2FchjTn7E9/S/FQjtXRXfagS1kOuabSJkb7l9C2kDnL3b+mBy2gSgJRNj1yQVwuZEdANTRRdiCaCTpyUTMSuhm18NkcuBqvz6uuIgjlpx9mLrhrFrFieSetuYkJUg8zRkFe9j+zhT8R7machygM+GVHEQv23zDXV1+6yd5LXqJp3I7w395iEx5G3zr+UBlGU09XZS5QE0ZyFZuphvXsXmpD1KpCQvMTkFnUZTOG54Bzj778Rebn+cvv2PLQRBEARBkADesxCb4VeV3QcAAAAASUVORK5CYII=" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAABm0lEQVR4nO1YQY6DMAw0q30CSJyR4CWcOPNMznvqS1qJc6XtH+hhRWVlExwcp46lzq2iBE8849gBMI4K/6jbYeMs8rhfK/pfefD6cN0O2+/th7VI009qJL40PiqJ7xyLxkhRKmNBAk0/Hb4YklvdDtu6jOSHuxleJFPIHGYgtDDX7BiYZDfDxiVRhAfWZWRvirgHHvdrheXhg09i6zKyMpHFxFQQO0GXCIdEFgIU9gB9RM6SUPVAKMgznlA38Z9nLuz31QkApJEogoAPsTIqhgA3CypVCIPaZfe5a3xVAlTf5Hvmllj1MnpGNt18+ZcBdQ/EkvAFD1AAAQCaRCh4AMIDEm1zbgQJcOdjLvYu1jXu0e4DREqo6SdyQpOAKyUqeICIMopvHJp+Yt9cxALPEzEdadQ58G4viM4D7/bCWZi/mftAG+zUax5yWLIsAikXwRLApb2IXigF5gmIDDS52owYmYpNZNJngZl7oVSoD/UUsDx9kjKRgeR5QBtHfiheQlQlMpGBI4hlQKs3EiGg2ReZl5B5AubnAfN4AtYy1uVzK8QtAAAAAElFTkSuQmCC"><p id="drehen-text" lang="de" aria-live="polite"></p></div></div>
+  <div id="sm-ansage" class="sm-sr" lang="de" aria-live="polite"></div><!-- 24: Ansage des Drehhinweises aus dem Spiel (SanktMartinDrehen.jslib) -->
+  <!-- 41 (Loca P0-3/P1-10, loca/GLOSSAR.md Z. 91-92, 109-111): Texte der Web-Vorlage; verdrahtet werden sie erst mit Strang 37b ff. -->
+  <script>
+    window.smTexte = {
+      "ui.sr.canvas": "Sankt Martin, ein Laternenspiel aus Stolberg. Tippen zum Spielen. Tastatur: Pfeiltasten, Enter und Esc",
+      "ui.sr.canvas.role": "Spiel",
+      "web.loader.loading": "Spiel lädt",
+      "web.loader.error": "Das Spiel konnte leider nicht geladen werden. Oft hilft es, die Seite neu zu laden.",
+      "web.loader.retry": "Nochmal laden",
+      "web.loader.rotate": "Bitte quer drehen, dann geht es los",
+      "web.loader.widen": "Bitte das Fenster breiter ziehen, dann geht es los"
+    };
+    // 48f (Stufe 3, web.loader.*): dieselben Texte aus loca/SPRACHEN-1.0-2026-10-27/SPRACHEN.tsv (sha256 884457a1...), eingebettet, kein Nachladen.
+    // 48m: web.loader.rotate/widen je Sprache aus SPRACHEN.tsv 5369b07f... ergaenzt (alte Texte dort byte-gleich); gesperrte Sprachen bleiben eingebettet.
+    // Wahl wie Sprache.Systemsprache(): erste unterstuetzte Browsersprache (pt* -> pt-PT, in/id -> id, zh -> en), sonst en; de bleibt Markup-Text.
+    // Die im Spiel gespeicherte Wahl (PlayerPrefs, IndexedDB) ist vor dem Laden nicht lesbar - der Ladebildschirm folgt daher der Browsersprache.
+    // Nur navigator.languages wird gelesen: kein Speichern, kein Netz, kein Tracking, keine Adressaenderung.
+    window.smTexteSprachen = {
+      "en": { "ui.sr.canvas": "Sankt Martin, a lantern game from Stolberg. Tap to play. Keyboard: arrow keys, Enter and Esc", "ui.sr.canvas.role": "game", "web.loader.loading": "Loading game", "web.loader.error": "Sorry, the game could not be loaded. Reloading the page often helps.", "web.loader.retry": "Load again", "web.loader.rotate": "Please turn sideways to begin", "web.loader.widen": "Please make the window wider to begin" },
+      "es": { "ui.sr.canvas": "Sankt Martin, un juego de farolillos de Stolberg. Toca para jugar. Teclado: flechas, Intro y Esc", "ui.sr.canvas.role": "juego", "web.loader.loading": "Cargando", "web.loader.error": "Lo sentimos, no se ha podido cargar el juego. Suele ayudar recargar la página.", "web.loader.retry": "Volver a cargar", "web.loader.rotate": "Gira en horizontal para empezar", "web.loader.widen": "Haz la ventana más ancha para empezar" },
+      "fr": { "ui.sr.canvas": "Sankt Martin, un jeu de lanternes de Stolberg. Touchez pour jouer. Clavier : flèches, Entrée et Échap", "ui.sr.canvas.role": "jeu", "web.loader.loading": "Chargement", "web.loader.error": "Désolé, le jeu n'a pas pu être chargé. Recharger la page aide souvent.", "web.loader.retry": "Recharger", "web.loader.rotate": "Tournez à l'horizontale pour commencer", "web.loader.widen": "Veuillez élargir la fenêtre pour commencer" },
+      "it": { "ui.sr.canvas": "Sankt Martin, un gioco di lanterne da Stolberg. Tocca per giocare. Tastiera: frecce, Invio ed Esc", "ui.sr.canvas.role": "gioco", "web.loader.loading": "Caricamento", "web.loader.error": "Purtroppo non è stato possibile caricare il gioco. Spesso aiuta ricaricare la pagina.", "web.loader.retry": "Ricarica", "web.loader.rotate": "Ruota in orizzontale per iniziare", "web.loader.widen": "Allarga la finestra per iniziare" },
+      "pt-PT": { "ui.sr.canvas": "Sankt Martin, um jogo de lanternas de Stolberg. Toque para jogar. Teclado: setas, Enter e Esc", "ui.sr.canvas.role": "jogo", "web.loader.loading": "A carregar", "web.loader.error": "Lamentamos, não foi possível carregar o jogo. Muitas vezes ajuda recarregar a página.", "web.loader.retry": "Carregar de novo", "web.loader.rotate": "Rode para a horizontal para começar", "web.loader.widen": "Alargue a janela para começar" },
+      "nl": { "ui.sr.canvas": "Sankt Martin, een lampionnenspel uit Stolberg. Tik om te spelen. Toetsenbord: pijltjestoetsen, Enter en Esc", "ui.sr.canvas.role": "spel", "web.loader.loading": "Spel laadt", "web.loader.error": "Helaas kon het spel niet worden geladen. Vaak helpt het om de pagina opnieuw te laden.", "web.loader.retry": "Opnieuw laden", "web.loader.rotate": "Draai naar liggend om te beginnen", "web.loader.widen": "Maak het venster breder om te beginnen" },
+      "pl": { "ui.sr.canvas": "Sankt Martin, gra z lampionami ze Stolbergu. Dotknij, aby grać. Klawiatura: strzałki, Enter i Esc", "ui.sr.canvas.role": "gra", "web.loader.loading": "Ładowanie gry", "web.loader.error": "Niestety nie udało się wczytać gry. Często pomaga odświeżenie strony.", "web.loader.retry": "Wczytaj ponownie", "web.loader.rotate": "Obróć poziomo, a zaczynamy", "web.loader.widen": "Poszerz okno, a zaczynamy" },
+      "ru": { "ui.sr.canvas": "Sankt Martin, игра с фонариками из Штольберга. Нажмите, чтобы играть. Клавиатура: стрелки, Enter и Esc", "ui.sr.canvas.role": "Игра", "web.loader.loading": "Загрузка игры", "web.loader.error": "К сожалению, игру не удалось загрузить. Часто помогает обновить страницу.", "web.loader.retry": "Загрузить снова", "web.loader.rotate": "Поверните экран боком — и начнём", "web.loader.widen": "Сделайте окно пошире — и начнём" },
+      "tr": { "ui.sr.canvas": "Sankt Martin, Stolberg'den bir fener oyunu. Oynamak için dokunun. Klavye: ok tuşları, Enter ve Esc", "ui.sr.canvas.role": "Oyun", "web.loader.loading": "Yükleniyor", "web.loader.error": "Maalesef oyun yüklenemedi. Sayfayı yeniden yüklemek çoğu zaman işe yarar.", "web.loader.retry": "Yeniden yükle", "web.loader.rotate": "Başlamak için lütfen yan çevirin", "web.loader.widen": "Başlamak için lütfen pencereyi genişletin" },
+      "ja": { "ui.sr.canvas": "Sankt Martin、シュトルベルクの ちょうちんゲーム。タップして あそぶ。キーボード：矢印キー、Enter、Esc", "ui.sr.canvas.role": "ゲーム", "web.loader.loading": "よみこみ中", "web.loader.error": "ゲームを読み込めませんでした。ページを再読み込みすると、たいてい直ります。", "web.loader.retry": "もう一度読み込む", "web.loader.rotate": "よこむきに すると はじまるよ", "web.loader.widen": "ウィンドウを ひろげると はじまるよ" },
+      "ko": { "ui.sr.canvas": "Sankt Martin, 슈톨베르크에서 온 등불 게임. 눌러서 시작하세요. 키보드: 화살표 키, Enter, Esc", "ui.sr.canvas.role": "게임", "web.loader.loading": "게임 불러오는 중", "web.loader.error": "죄송합니다. 게임을 불러오지 못했습니다. 페이지를 새로고침하면 대부분 해결됩니다.", "web.loader.retry": "다시 불러오기", "web.loader.rotate": "가로로 돌려 주시면 시작해요", "web.loader.widen": "창을 더 넓게 해 주시면 시작해요" },
+      "id": { "ui.sr.canvas": "Sankt Martin, gim lampion dari Stolberg. Ketuk untuk bermain. Papan ketik: tombol panah, Enter, dan Esc", "ui.sr.canvas.role": "Gim", "web.loader.loading": "Memuat gim", "web.loader.error": "Maaf, gim tidak dapat dimuat. Memuat ulang halaman sering kali membantu.", "web.loader.retry": "Muat ulang", "web.loader.rotate": "Mohon putar mendatar untuk mulai", "web.loader.widen": "Mohon lebarkan jendela untuk mulai" }
+    };
+    (function () {
+      var codes = ["de", "en", "es", "fr", "it", "pt-PT", "nl", "pl", "ru", "tr", "ja", "ko", "id"], wahl = "en", l = [];
+      var gesperrt = [];   // 48l (GF 27.10.): in 1.0 nicht angeboten -> naechste Browsersprache, sonst en. SYNCHRON halten mit Sprache.Gesperrt (Assets/SanktMartin/Scripts/Core/Sprache.cs)!
+      try { l = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || ""]; } catch (e) { l = []; }
+      for (var i = 0; i < l.length; i++) {
+        var t = String(l[i] || "").replace("_", "-").toLowerCase(), b = t.split("-")[0];
+        var c = b === "pt" ? "pt-PT" : (b === "in" || b === "id") ? "id" : b === "zh" ? "en" : (codes.indexOf(b) >= 0 ? b : null);
+        if (c && gesperrt.indexOf(c) < 0) { wahl = c; break; }   // 48l: gesperrte Sprache ueberspringen
+      }
+      window.smLoaderSprache = wahl;
+      var tab = window.smTexteSprachen[wahl];
+      if (tab) { for (var k in tab) if (Object.prototype.hasOwnProperty.call(tab, k)) window.smTexte[k] = tab[k]; try { document.documentElement.lang = wahl; } catch (e) {} }
+    })();
+  </script>
+  <script src="Build/Web_RC2.loader.js"></script>
+  <script>
+    var licht = document.getElementById("licht"), laterne = document.getElementById("laterne");
+    // 37f-v2: Texte aus window.smTexte (Strang 41); fehlt ein Key, bleibt der Text im Markup bzw. der deutsche Rueckfall stehen.
+    function smText(key, rueckfall) { var t = window.smTexte && window.smTexte[key]; return typeof t === "string" && t ? t : rueckfall; }
+    (function () {
+      var c = document.getElementById("unity-canvas");
+      if (c) { c.setAttribute("aria-label", smText("ui.sr.canvas", c.getAttribute("aria-label"))); c.setAttribute("aria-roledescription", smText("ui.sr.canvas.role", c.getAttribute("aria-roledescription"))); }
+      laterne.setAttribute("aria-label", smText("web.loader.loading", laterne.getAttribute("aria-label")));
+    })();
+    // 24: Ladebildschirm-Drehhinweis. Sichtbar macht ihn die Media-Query oben; der Text kommt erst dann in die aria-live-Region,
+    // damit er einmal angesagt wird. Touch (pointer: coarse) -> web.loader.rotate, sonst (Maus/Desktop) -> web.loader.widen.
+    // v2: window.smLoaderAngesagt = steht die Ansage gerade; dann laesst das Spiel seine erste Ansage weg (keine doppelte Ansage).
+    var drehenAus = function () { };
+    (function () {
+      var hoch = window.matchMedia("(max-aspect-ratio: 1/1)"), grob = window.matchMedia("(pointer: coarse)");
+      var feld = document.getElementById("drehen-text"), bild = document.getElementById("drehen-bild"), quer = bild.getAttribute("src");
+      function setzen() {
+        bild.setAttribute("src", grob.matches ? quer : bild.getAttribute("data-breit"));   // Desktop: Fenster "breiter" statt Geraet "quer"
+        feld.textContent = !hoch.matches ? "" : grob.matches ? smText("web.loader.rotate", "Bitte quer drehen, dann geht es los") : smText("web.loader.widen", "Bitte das Fenster breiter ziehen, dann geht es los");   // 48m: je Sprache
+        try { var sp = window.smLoaderSprache; feld.setAttribute("lang", sp && window.smTexteSprachen && window.smTexteSprachen[sp] ? sp : "de"); } catch (e) { }   // 48m: Vorlese-Sprache passend
+        window.smLoaderAngesagt = hoch.matches;
+      }
+      setzen();
+      if (hoch.addEventListener) {
+        hoch.addEventListener("change", setzen); grob.addEventListener("change", setzen);
+        drehenAus = function () { hoch.removeEventListener("change", setzen); grob.removeEventListener("change", setzen); };
+      }
+    })();
+    // 50p (Abnahme W50 2e): Spielflaeche auf ganze, gerade Geraete-px. Die CSS-Regel oben (max-width = Hoehe x 2,4, Flex-Mitte) ergab bei
+    // 780x304 eine Leinwand ab x 25,203 css mit Breite 729,594 css -> Halbpixel und Mischpixel. Jetzt rechnet JS in Geraete-px
+    // (echtes devicePixelRatio, nicht das auf 2 begrenzte der Engine): Hoehe und Breite gerade, Breite hoechstens Hoehe x 2,4, Rest
+    // links/rechts bzw. oben/unten zu gleichen Teilen, Versatz ebenfalls gerade Geraete-px. Neu bei Fenstergroesse, Drehen, Vollbild an/aus,
+    // Zoom/DPR-Wechsel. Die CSS-Regel bleibt als Rueckfall ohne JS. Kein Speichern, kein Netz, keine Adressaenderung.
+    window.smRaster = function () { };
+    (function () {
+      var b = document.getElementById("buehne"), c = document.getElementById("unity-canvas");
+      if (!b || !c || !b.getBoundingClientRect || !window.getComputedStyle) return;
+      function zuruecksetzen() { c.style.position = c.style.left = c.style.top = c.style.width = c.style.height = c.style.maxWidth = ""; }
+      function gerade(v) { return 2 * Math.floor(v / 2 + 1e-6); }
+      function achse(von, frei, soll) {   // von/frei in Geraete-px (koennen krumm sein); liefert geraden Versatz und gerade Laenge innerhalb
+        var lo = Math.ceil(von - 1e-6), hi = Math.floor(von + frei + 1e-6), n = Math.min(gerade(soll), gerade(hi - lo));
+        var x = 2 * Math.round((von + (frei - n) / 2) / 2);
+        if (x < lo) x += 2;
+        while (n > 0 && x + n > hi) n -= 2;
+        return [x, n];
+      }
+      window.smRaster = function () {
+        var dpr = window.devicePixelRatio || 1, s = window.getComputedStyle(b), r = b.getBoundingClientRect();
+        var pl = parseFloat(s.paddingLeft) || 0, pr = parseFloat(s.paddingRight) || 0, pt = parseFloat(s.paddingTop) || 0, pb = parseFloat(s.paddingBottom) || 0;
+        var X0 = (r.left + pl) * dpr, Y0 = (r.top + pt) * dpr, W = (r.width - pl - pr) * dpr, H = (r.height - pt - pb) * dpr;
+        if (!(W >= 2 && H >= 2)) { zuruecksetzen(); return; }
+        var y = achse(Y0, H, H), x = achse(X0, W, Math.min(W, y[1] * 2.4));
+        if (x[1] < 2 || y[1] < 2) { zuruecksetzen(); return; }
+        // #buehne ist position: fixed ohne Rand -> left/top beziehen sich auf die Fensterecke (Innenabstand zaehlt nicht)
+        c.style.position = "absolute"; c.style.maxWidth = "none";
+        c.style.left = (x[0] / dpr - r.left) + "px"; c.style.top = (y[0] / dpr - r.top) + "px";
+        c.style.width = (x[1] / dpr) + "px"; c.style.height = (y[1] / dpr) + "px";
+      };
+      var dprAbfrage = null;
+      function dprBeobachten() {   // Zoom oder Wechsel auf einen anderen Bildschirm aendert devicePixelRatio ohne resize auf manchen Browsern
+        if (!window.matchMedia) return;
+        if (dprAbfrage && dprAbfrage.removeEventListener) dprAbfrage.removeEventListener("change", neu);
+        dprAbfrage = window.matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
+        if (dprAbfrage.addEventListener) dprAbfrage.addEventListener("change", neu);
+      }
+      function neu() {
+        window.smRaster(); dprBeobachten();
+        if (window.requestAnimationFrame) window.requestAnimationFrame(function () { window.smRaster(); if (window.smVollbildPruefen) window.smVollbildPruefen(); });   // Vollbild-Wechsel: Masse stehen oft erst im naechsten Bild
+      }
+      // vor den Lauschern des Vollbild-Knopfs (31) angemeldet -> laeuft zuerst, smVollbildPruefen liest danach die neue Leinwand-Lage
+      window.addEventListener("resize", neu); window.addEventListener("orientationchange", neu);
+      document.addEventListener("fullscreenchange", neu); document.addEventListener("webkitfullscreenchange", neu);
+      if (window.visualViewport && window.visualViewport.addEventListener) window.visualViewport.addEventListener("resize", neu);
+      window.smRaster(); dprBeobachten();
+    })();
+    // 31: Vollbild per HTML-Knopf. requestFullscreen laeuft direkt im click-Handler des Knopfes (echte Nutzergeste; ein Unity-UI-Klick
+    // kaeme erst im naechsten Spielbild an und wuerde von Android Chrome abgelehnt). Ziel ist das ganze Dokument, damit Ladebild,
+    // Drehhinweis und Safe-Area-Rand mit ins Vollbild gehen. Feature-Detect statt Geraeteerkennung: iPhone (kein Element-Vollbild) und
+    // ein iframe ohne allow="fullscreen" melden fullscreenEnabled = false -> Knopf bleibt aus, ohne Hinweis. Fehler werden still verworfen.
+    // Kein Orientierungs-Lock (1.1), keine Adressaenderung, kein Speichern.
+    (function () {
+      var d = document, el = d.documentElement, knopf = d.getElementById("vollbild"), leinwand = d.getElementById("unity-canvas");
+      var hoch = window.matchMedia("(max-aspect-ratio: 1/1)");
+      var geht = !!(d.fullscreenEnabled || d.webkitFullscreenEnabled) && !!(el.requestFullscreen || el.webkitRequestFullscreen);
+      function voll() { return !!(d.fullscreenElement || d.webkitFullscreenElement); }
+      window.smVollbildMenue = false;
+      window.smVollbildPruefen = function () {
+        if (!geht || !window.smVollbildMenue || voll() || hoch.matches) { knopf.style.display = "none"; return; }
+        // wie ElternEcke.Anordnen (Geraete-px, Pixelverhaeltnis wie oben auf hoechstens 2 begrenzt): Zahnrad 24*kb, Rand; Knopf 24 px links davon
+        var r = leinwand.getBoundingClientRect(), dp = Math.min(window.devicePixelRatio || 1, 2);
+        var W = Math.round(r.width * dp), H = Math.round(r.height * dp), m = Math.max(1, Math.floor(dp + 0.01));   // 37b: wie MenueV5/ElternEcke
+        if (W / m < 320 || H / m < 180) m = 1;
+        var Wc = Math.floor(W / m), Hc = Math.floor(H / m);
+        var kb = m * Math.max(1, Math.ceil(Math.max(Wc / 640, Hc / 360) - 0.0001)), rand = m * 2 * Math.round(0.015 * Math.min(Wc, Hc));
+        var zahnrad = 24 * kb / dp, abstand = rand / dp, g = Math.max(48, zahnrad);
+        knopf.style.width = knopf.style.height = g + "px";
+        knopf.style.top = Math.round(r.top + abstand) + "px";
+        knopf.style.left = Math.round(r.left + r.width - abstand - zahnrad - 24 - g) + "px";
+        knopf.style.display = "block";
+      };
+      knopf.addEventListener("click", function () {
+        try {
+          var p = el.requestFullscreen ? el.requestFullscreen({ navigationUI: "hide" }) : el.webkitRequestFullscreen();
+          if (p && p.catch) p.catch(function () { });
+        } catch (e) { }
+      });
+      var neu = function () { window.smVollbildPruefen(); };
+      d.addEventListener("fullscreenchange", neu); d.addEventListener("webkitfullscreenchange", neu);
+      window.addEventListener("resize", neu); window.addEventListener("orientationchange", neu);
+    })();
+    // iPhone/iPad: Web-Audio-Ton auch bei eingeschaltetem Stumm-Schalter (Safari 16.4+, wirksam ab iOS 17); andere Browser ignorieren das
+    if ("audioSession" in navigator) { try { navigator.audioSession.type = "playback"; } catch (e) { } }
+    createUnityInstance(document.querySelector("#unity-canvas"), {
+      dataUrl: "Build/Web_RC2.data.unityweb",
+      frameworkUrl: "Build/Web_RC2.framework.js.unityweb",
+      codeUrl: "Build/Web_RC2.wasm.unityweb",
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "Faunsoft",
+      productName: "Sankt Martin",
+      productVersion: "1.0.0",
+      // Spielstand und Einstellungen (Application.persistentDataPath) nach jedem Schreiben in IndexedDB sichern;
+      // ohne diesen Schalter liegen sie nur im Arbeitsspeicher und sind nach dem Neuladen weg.
+      autoSyncPersistentDataPath: true,
+      // 31: Pixelverhaeltnis hoechstens 2 (S25 Ultra: 3 -> 2, Bildpunkte 2340x1080 -> 1560x720 = 44 %). Unity rechnet Screen.dpi daraus;
+      // Haus, Zahnrad und Menue skalieren gleich mit (im Build-Probelauf 780x360 @3 geprueft: identisches Layout).
+      devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+    }, function (fortschritt) {
+      var prozent = Math.round(fortschritt * 100);
+      licht.style.height = prozent + "%";
+      laterne.setAttribute("aria-valuenow", String(prozent));          // 37f
+    }).then(function () {
+      drehenAus();                                                    // v2: nach dem Laden zaehlt nur noch der Hinweis im Spiel
+      document.getElementById("laden").style.display = "none";
+      try { document.getElementById("unity-canvas").focus({ preventScroll: true }); } catch (e) { }   // 37d: Tastatur und Screenreader starten im Spiel
+    }).catch(function (meldung) {
+      // 37f (P1-10): Satz als role=alert (web.loader.error) und ein Knopf "Nochmal laden" (web.loader.retry), sofort fokussiert.
+      // Nur location.reload(), kein Link nach aussen (CSP bleibt), keine Adressaenderung.
+      var laden = document.getElementById("laden"); laden.innerHTML = "";
+      var satz = document.createElement("p"); satz.id = "fehler"; satz.setAttribute("role", "alert");
+      satz.textContent = smText("web.loader.error", "Das Spiel konnte leider nicht geladen werden. Oft hilft es, die Seite neu zu laden.");
+      var knopf = document.createElement("button"); knopf.id = "nochmal"; knopf.type = "button"; knopf.textContent = smText("web.loader.retry", "Nochmal laden");
+      knopf.addEventListener("click", function () { location.reload(); });
+      laden.appendChild(satz); laden.appendChild(knopf);
+      try { knopf.focus({ preventScroll: true }); } catch (e) { }
+      console.error(meldung);
+    });
+  </script>
+</body>
+</html>
