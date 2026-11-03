@@ -10,6 +10,9 @@
   <link rel="icon" href="data:,"><!-- R169: kein favicon.ico-Abruf (sonst 404 in der Konsole) -->
   <style>
     html, body { margin: 0; height: 100%; background: #1a2145; overflow: hidden; }
+    /* Vorgabe 03.11.2026: kein Markieren, kein Kontextmenue, kein Bild-Herausziehen (Eingabefelder ausgenommen) */
+    html, body, body * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
     /* 31 (ENTWURF Vollbild/Responsive): Spielflaeche fuellt Fenster bzw. iframe ohne Balken. Safe Area (Notch, Home-Indikator) als
        Innenabstand in Ink #1A2145 (RC-Fallback aus ui/LAYOUT-VOLLBILD-RESPONSIVE-2026-10-27.md 2); breiter als 2,4 : 1 -> Ink-Pillarbox. */
     #buehne { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; box-sizing: border-box; background: #1a2145;
@@ -59,6 +62,12 @@
   <div id="sm-ansage" class="sm-sr" lang="de" aria-live="polite"></div><!-- 24: Ansage des Drehhinweises aus dem Spiel (SanktMartinDrehen.jslib) -->
   <!-- 41 (Loca P0-3/P1-10, loca/GLOSSAR.md Z. 91-92, 109-111): Texte der Web-Vorlage; verdrahtet werden sie erst mit Strang 37b ff. -->
   <script>
+    // Vorgabe 03.11.2026: Rechtsklick/langes Druecken, Markieren und Herausziehen abfangen, ausser in echten Eingabefeldern
+    ["contextmenu", "selectstart", "dragstart"].forEach(function (art) {
+      document.addEventListener(art, function (e) { var z = e.target; if (z && z.closest && z.closest("input, textarea")) return; e.preventDefault(); });
+    });
+  </script>
+  <script>
     window.smTexte = {
       "ui.sr.canvas": "Sankt Martin, ein Laternenspiel aus Stolberg. Tippen zum Spielen. Tastatur: Pfeiltasten, Enter und Esc",
       "ui.sr.canvas.role": "Spiel",
@@ -101,7 +110,7 @@
       if (tab) { for (var k in tab) if (Object.prototype.hasOwnProperty.call(tab, k)) window.smTexte[k] = tab[k]; try { document.documentElement.lang = wahl; } catch (e) {} }
     })();
   </script>
-  <script src="Build/Web_RC2.loader.js"></script>
+  <script src="Build/Web_RC3.loader.js"></script>
   <script>
     var licht = document.getElementById("licht"), laterne = document.getElementById("laterne");
     // 37f-v2: Texte aus window.smTexte (Strang 41); fehlt ein Key, bleibt der Text im Markup bzw. der deutsche Rueckfall stehen.
@@ -215,9 +224,9 @@
     // iPhone/iPad: Web-Audio-Ton auch bei eingeschaltetem Stumm-Schalter (Safari 16.4+, wirksam ab iOS 17); andere Browser ignorieren das
     if ("audioSession" in navigator) { try { navigator.audioSession.type = "playback"; } catch (e) { } }
     createUnityInstance(document.querySelector("#unity-canvas"), {
-      dataUrl: "Build/Web_RC2.data.unityweb",
-      frameworkUrl: "Build/Web_RC2.framework.js.unityweb",
-      codeUrl: "Build/Web_RC2.wasm.unityweb",
+      dataUrl: "Build/Web_RC3.data.unityweb",
+      frameworkUrl: "Build/Web_RC3.framework.js.unityweb",
+      codeUrl: "Build/Web_RC3.wasm.unityweb",
       streamingAssetsUrl: "StreamingAssets",
       companyName: "Faunsoft",
       productName: "Sankt Martin",
